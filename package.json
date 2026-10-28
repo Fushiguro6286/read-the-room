@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "probe": "tsx scripts/qloo-probe.ts",
     "run-agent": "tsx scripts/run-agent.ts",
