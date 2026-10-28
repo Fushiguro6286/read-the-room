@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+!.env.example
+
+# raw Qloo responses (Qloo terms: don't store response data in a public repo)
+/data/qloo-raw/
