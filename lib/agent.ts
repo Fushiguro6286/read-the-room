@@ -9,7 +9,9 @@ import type { ReferenceResult, RoomSignals, RunResult, SnapshotEntry, StepEvent,
 export { RoomError };
 
 const SNAPSHOT_TYPES = ["tv_show", "artist", "movie", "brand"];
-const PLACE_TYPES = ["urn:entity:place", "urn:entity:destination"];
+// The untyped search fallback may only fix a near-miss type guess, never turn a brand into an album or podcast.
+const TYPE_FAMILIES = [["person", "artist"], ["movie", "tv_show"], ["place", "destination"]].map((f) => f.map((t) => `urn:entity:${t}`));
+const sameFamily = (a: string, b: string) => a === b || TYPE_FAMILIES.some((f) => f.includes(a) && f.includes(b));
 
 export interface RunOptions {
   onStep?: (e: StepEvent) => void;
@@ -49,10 +51,19 @@ export function pickMatch(surface: string, results: QlooEntity[]): QlooEntity | 
   return results.find((e) => normalizeName(e.name) === n) ?? results.find((e) => namesMatch(surface, e.name));
 }
 
-/** Topical tags for the swap search: skip broad wikidata categories like "Person". */
-function topTags(tags: { id: string; name: string; type?: string }[]) {
-  const topical = tags.filter((t) => !t.type?.startsWith("urn:tag:category"));
-  return (topical.length ? topical : tags).slice(0, 3);
+/** Tags that define what something IS come first: genre, then subgenre, then keywords; broad wikidata categories last. */
+const TAG_PRIORITY = ["urn:tag:genre", "urn:tag:subgenre", "urn:tag:keyword", "urn:tag:brand_type", "urn:tag:theme"];
+export function topTags<T extends { id: string; type?: string }>(tags: T[]): T[] {
+  const rank = (t: T) => {
+    const i = TAG_PRIORITY.findIndex((p) => t.type?.startsWith(p));
+    return t.type?.startsWith("urn:tag:category") ? 99 : i === -1 ? TAG_PRIORITY.length : i;
+  };
+  return tags
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i)
+    .map((x) => x.t)
+    .filter((t, i, all) => all.findIndex((u) => u.id === t.id) === i)
+    .slice(0, 3);
 }
 
 export async function runAgent(input: { text: string; room: string }, opts: RunOptions = {}): Promise<RunResult> {
@@ -108,9 +119,9 @@ export async function runAgent(input: { text: string; room: string }, opts: RunO
         try {
           let hit = pickMatch(r.surface, await qloo.search(r.surface, guessed, 5));
           if (!hit) {
-            // Untyped fallback, but never turn a brand into a random store location.
+            // Untyped fallback for near-miss type guesses (e.g. a person guessed as an artist).
             const any = await qloo.search(r.surface, undefined, 5);
-            hit = pickMatch(r.surface, any.filter((e) => PLACE_TYPES.includes(guessed) || !PLACE_TYPES.includes(e.type)));
+            hit = pickMatch(r.surface, any.filter((e) => sameFamily(guessed, e.type)));
           }
           if (hit) Object.assign(r, { entityId: hit.id, entityName: hit.name, entityType: hit.type, tags: hit.tags.map(({ id, name, type }) => ({ id, name, type })) });
         } catch (e) {
@@ -167,14 +178,19 @@ export async function runAgent(input: { text: string; room: string }, opts: RunO
       await Promise.all(
         group.map(async (r) => {
           const tags = topTags(r.tags);
-          const got = await qloo.insights({
-            "filter.type": r.entityType,
-            ...signals,
-            "filter.tags": tags.map((t) => t.id).join(",") || undefined,
-            "operator.filter.tags": tags.length ? "union" : undefined,
-            "filter.exclude.entities": r.entityId,
-            take: "10",
-          });
+          const search = (operator: "union" | "intersection") =>
+            qloo.insights({
+              "filter.type": r.entityType,
+              ...signals,
+              "filter.tags": tags.map((t) => t.id).join(",") || undefined,
+              "operator.filter.tags": tags.length ? operator : undefined,
+              "filter.exclude.entities": r.entityId,
+              take: "10",
+            });
+          const strongCount = (xs: QlooEntity[]) => xs.filter((e) => (e.affinity ?? 0) >= THRESHOLDS.strong).length;
+          // Closest match first (all tags); widen to any tag when that's too narrow.
+          let got = tags.length > 1 ? await search("intersection") : [];
+          if (strongCount(got) < 3) got = [...got, ...(await search("union")).filter((e) => !got.some((g) => g.id === e.id))];
           const list = got
             .filter((e) => (e.affinity ?? 0) >= THRESHOLDS.strong && normalizeName(e.name) !== normalizeName(r.entityName ?? ""))
             .slice(0, 5)
@@ -193,6 +209,10 @@ export async function runAgent(input: { text: string; room: string }, opts: RunO
           for (let attempt = 0; attempt < 2 && weak.every((r) => cands.get(r.id)!.length); attempt++) {
             step("rewrite", "running", `Rewriting: "${s.text}"`);
             const rw = await rewriteWithLengthGuard(s.text, room.label, weak.map((r) => ({ referenceId: r.id, surface: r.surface, candidates: cands.get(r.id)! })));
+            if (rw.keepOriginal) {
+              step("rewrite", "done", `Kept as written: none of Qloo's candidates fit this sentence`);
+              break;
+            }
             const picks = weak.map((r) => ({ r, c: cands.get(r.id)!.find((c) => c.entityId === rw.picks.find((p) => p.referenceId === r.id)!.entityId)! }));
             step("rewrite", "done", `"${rw.rewrittenSentence}"`);
 
@@ -217,7 +237,7 @@ export async function runAgent(input: { text: string; room: string }, opts: RunO
                   entityName: c.name,
                   entityType: c.type,
                   affinity: verified.get(c.entityId)!,
-                  sharedTags: c.tags.filter((t) => r.tags.some((o) => o.name.toLowerCase() === t.toLowerCase())),
+                  sharedTags: c.tags.filter((t) => r.tags.some((o) => o.name.toLowerCase() === t.toLowerCase())).slice(0, 6),
                   originalSentence: s.text,
                   rewrittenSentence: rw.rewrittenSentence,
                   sentenceStart: s.start,
@@ -265,7 +285,7 @@ export async function runAgent(input: { text: string; room: string }, opts: RunO
 async function rewriteWithLengthGuard(sentence: string, room: string, weak: Parameters<typeof rewriteLLM>[2]) {
   const delta = (s: string) => Math.abs(s.length - sentence.length) / sentence.length;
   const first = await rewriteLLM(sentence, room, weak);
-  if (delta(first.rewrittenSentence) <= 0.1) return first;
+  if (first.keepOriginal || delta(first.rewrittenSentence) <= 0.1) return first;
   const second = await rewriteLLM(sentence, room, weak).catch(() => first);
   return delta(second.rewrittenSentence) < delta(first.rewrittenSentence) ? second : first;
 }

@@ -76,12 +76,19 @@ export function namesMatch(surface: string, entityName: string): boolean {
 /** Sentence spans with offsets into the original text. */
 export function splitSentences(text: string): { start: number; end: number; text: string }[] {
   const out: { start: number; end: number; text: string }[] = [];
-  const re = /[^.!?]+(?:[.!?]+["'”’)\]]*|$)/g;
-  for (const m of text.matchAll(re)) {
-    const lead = m[0].length - m[0].trimStart().length;
-    const body = m[0].trim();
-    if (body) out.push({ start: m.index! + lead, end: m.index! + lead + body.length, text: body });
+  const push = (from: number, to: number) => {
+    const raw = text.slice(from, to);
+    const lead = raw.length - raw.trimStart().length;
+    const body = raw.trim();
+    if (body) out.push({ start: from + lead, end: from + lead + body.length, text: body });
+  };
+  let from = 0;
+  for (const m of text.matchAll(/[.!?…]+["'”’)\]]*(?=\s|$)/g)) {
+    if (/^(\.{2,}|…)/.test(m[0])) continue; // ellipsis: "so... like X?" stays one sentence
+    push(from, m.index! + m[0].length);
+    from = m.index! + m[0].length;
   }
+  push(from, text.length);
   return out;
 }
 

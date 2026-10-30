@@ -107,3 +107,24 @@ describe("segments", () => {
     void s0;
   });
 });
+
+describe("sentence splitting edge cases", () => {
+  it("keeps an ellipsis inside the sentence and ends on quoted punctuation", () => {
+    const t = `He's a "content creator." I said, so... like The Price Is Right? Fine`;
+    expect(splitSentences(t).map((s) => s.text)).toEqual([`He's a "content creator."`, "I said, so... like The Price Is Right?", "Fine"]);
+  });
+});
+
+describe("swap search tags", () => {
+  it("ranks genre tags first and drops broad categories", async () => {
+    const { topTags } = await import("@/lib/agent");
+    const tags = [
+      { id: "c", type: "urn:tag:category:wikidata" },
+      { id: "k1", type: "urn:tag:keyword:qloo" },
+      { id: "g1", type: "urn:tag:genre:media" },
+      { id: "s1", type: "urn:tag:subgenre:qloo" },
+      { id: "g2", type: "urn:tag:genre:qloo" },
+    ];
+    expect(topTags(tags).map((t) => t.id)).toEqual(["g1", "g2", "s1"]);
+  });
+});

@@ -27,31 +27,42 @@ export function geminiText(j: { output_text?: string; steps?: { type?: string; c
   return (out?.content ?? []).map((c) => c.text ?? "").join("");
 }
 
+const FALLBACK_MODEL = "gemini-3.5-flash-lite";
+
 async function geminiJson(schema: z.ZodType, system: string, prompt: string, effort: Effort): Promise<unknown> {
   const { $schema, ...jsonSchema } = z.toJSONSchema(schema) as Record<string, unknown>;
   void $schema;
-  const body = JSON.stringify({
-    model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
-    system_instruction: system,
-    input: prompt,
-    store: false,
-    response_format: { type: "text", mime_type: "application/json", schema: jsonSchema },
-    generation_config: { thinking_level: effort === "high" ? "high" : effort },
-  });
+  const primary = process.env.GEMINI_MODEL || FALLBACK_MODEL;
   let res: Response | undefined;
+  let lastErr = "";
   for (let attempt = 0; attempt < 3; attempt++) {
-    res = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
-      body,
-      signal: AbortSignal.timeout(60_000),
-    });
-    // Free tier has a per-minute cap: back off and retry on 429/5xx.
-    if (res.status !== 429 && res.status < 500) break;
-    await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+    // Free-tier models can hang or return "high demand"; later attempts use the lite model, which stays responsive.
+    const model = attempt === 0 ? primary : FALLBACK_MODEL;
+    try {
+      res = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
+        body: JSON.stringify({
+          model,
+          system_instruction: system,
+          input: prompt,
+          store: false,
+          response_format: { type: "text", mime_type: "application/json", schema: jsonSchema },
+          generation_config: { thinking_level: effort },
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (res.status !== 429 && res.status < 500) break;
+      lastErr = `Gemini ${res.status}`;
+    } catch (e) {
+      res = undefined;
+      lastErr = (e as Error).message;
+    }
+    await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
   }
-  const j = await res!.json().catch(() => ({}));
-  if (!res!.ok) throw new Error(`Gemini ${res!.status}: ${j?.error?.code ?? ""} ${j?.error?.message ?? ""}`.trim());
+  if (!res) throw new Error(`Gemini unavailable: ${lastErr}`);
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${j?.error?.code ?? ""} ${j?.error?.message ?? ""}`.trim());
   try {
     return JSON.parse(geminiText(j));
   } catch {
@@ -135,6 +146,7 @@ export interface Candidate {
 export const RewriteSchema = z.object({
   picks: z.array(z.object({ referenceId: z.string(), entityId: z.string() })),
   rewrittenSentence: z.string(),
+  keepOriginal: z.boolean().describe("true if no candidate fits the sentence's meaning; then picks may be empty"),
 });
 
 /** Picks one Qloo candidate per weak reference and rewrites the sentence around them. */
@@ -159,7 +171,8 @@ export function rewriteLLM(
     "You are a comedy and copy editor. Replace cultural references that will not land with an audience. " +
       "For each reference, choose the candidate that best fits the sentence's meaning and joke, from the given list only. " +
       "Rewrite ONLY this sentence: keep its meaning, structure, tone and punchline, change as few words as possible, " +
-      `and use each chosen name as written. Keep it between ${lo} and ${hi} characters.`,
+      `and use each chosen name as written. Keep it between ${lo} and ${hi} characters. ` +
+      "If no candidate makes sense in the sentence (the line would stop making sense), set keepOriginal to true instead of forcing one.",
     `Audience: ${room}\n\nSentence: ${sentence}\n\n${body}`,
     { effort: "medium", check: (v) => validateRewrite(weak, v) },
   );
@@ -167,6 +180,7 @@ export function rewriteLLM(
 
 /** The LLM may only choose from Qloo's candidates, and must actually use the chosen name. */
 export function validateRewrite(weak: { referenceId: string; candidates: Candidate[] }[], v: z.infer<typeof RewriteSchema>): string | null {
+  if (v.keepOriginal) return null;
   for (const w of weak) {
     const p = v.picks.find((x) => x.referenceId === w.referenceId);
     const c = p && w.candidates.find((x) => x.entityId === p.entityId);
