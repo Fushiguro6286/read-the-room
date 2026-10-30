@@ -3,7 +3,11 @@ import { useEffect, useRef } from "react";
 import type { ReferenceResult } from "@/lib/types";
 import { AffinityBar, affinityText, QlooTag, StatusBadge } from "./ui";
 
-const typeName = (t?: string) => (t ? t.split(":").pop()!.replace("_", " ") : "unknown type");
+const TYPE_LABELS: Record<string, string> = { tv_show: "TV show", videogame: "video game" };
+const typeName = (t?: string) => {
+  const k = t?.split(":").pop() ?? "";
+  return TYPE_LABELS[k] ?? (k || "unknown type");
+};
 
 /** "Why this swap?" card. A centered dialog on desktop, a bottom sheet on phones. */
 export function SwapPopover({ r, onClose }: { r: ReferenceResult; onClose: () => void }) {
@@ -36,7 +40,7 @@ export function SwapPopover({ r, onClose }: { r: ReferenceResult; onClose: () =>
             <AffinityBar label={`After: ${s.entityName}`} value={s.affinity} tone="strong" />
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
               <dt className="text-ink-soft">Type</dt>
-              <dd className="capitalize">{typeName(s.entityType)} (same as the original)</dd>
+              <dd>{typeName(s.entityType)} (same as the original)</dd>
               <dt className="text-ink-soft">Shared tags</dt>
               <dd className="flex flex-wrap gap-1.5">
                 {s.sharedTags.length ? s.sharedTags.map((t) => <span key={t} className="rounded-full bg-spot/15 px-2 py-0.5 text-xs font-medium text-ink">{t}</span>) : <span className="text-ink-soft">Matched on the original&apos;s top tags</span>}

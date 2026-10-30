@@ -11,7 +11,9 @@ function getRedis(): Redis | null {
   return client;
 }
 
-const mem = new Map<string, { value: unknown; expires: number }>();
+// On globalThis so route handlers and pages (separate module copies in dev) share one store.
+const g = globalThis as unknown as { __rtrMem?: Map<string, { value: unknown; expires: number }> };
+const mem = (g.__rtrMem ??= new Map());
 
 export async function cacheGet<T>(key: string): Promise<T | null> {
   const redis = getRedis();

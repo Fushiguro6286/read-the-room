@@ -28,6 +28,22 @@ export function geminiText(j: { output_text?: string; steps?: { type?: string; c
 }
 
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Free tier: 15 requests/minute. Stay under it within this process.
+// shortcut: per-process window; separate serverless instances can still exceed the cap together. Upgrade to a paid tier or a shared Redis limiter if live traffic grows.
+const recent: number[] = [];
+async function throttle(perMinute = 14) {
+  for (;;) {
+    const now = Date.now();
+    while (recent.length && now - recent[0] > 60_000) recent.shift();
+    if (recent.length < perMinute) {
+      recent.push(now);
+      return;
+    }
+    await sleep(60_000 - (now - recent[0]) + 100);
+  }
+}
 
 async function geminiJson(schema: z.ZodType, system: string, prompt: string, effort: Effort): Promise<unknown> {
   const { $schema, ...jsonSchema } = z.toJSONSchema(schema) as Record<string, unknown>;
@@ -35,7 +51,8 @@ async function geminiJson(schema: z.ZodType, system: string, prompt: string, eff
   const primary = process.env.GEMINI_MODEL || FALLBACK_MODEL;
   let res: Response | undefined;
   let lastErr = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await throttle();
     // Free-tier models can hang or return "high demand"; later attempts use the lite model, which stays responsive.
     const model = attempt === 0 ? primary : FALLBACK_MODEL;
     try {
@@ -54,11 +71,17 @@ async function geminiJson(schema: z.ZodType, system: string, prompt: string, eff
       });
       if (res.status !== 429 && res.status < 500) break;
       lastErr = `Gemini ${res.status}`;
+      if (res.status === 429) {
+        // The error says how long to wait ("Please retry in 32s").
+        const secs = Number((await res.clone().text()).match(/retry in (\d+(?:\.\d+)?)s/)?.[1] ?? 10);
+        await sleep(Math.min(45, secs + 1) * 1000);
+        continue;
+      }
     } catch (e) {
       res = undefined;
       lastErr = (e as Error).message;
     }
-    await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    await sleep(1500 * (attempt + 1));
   }
   if (!res) throw new Error(`Gemini unavailable: ${lastErr}`);
   const j = await res.json().catch(() => ({}));
@@ -129,7 +152,7 @@ export function extractLLM(text: string, max: number) {
     "You find cultural references in text: TV shows, movies, musicians, brands and products, celebrities and public figures, " +
       "books, podcasts, video games, and famous places. Copy each one exactly as written (same spelling and case). " +
       "Skip generic words (e.g. 'coffee', 'the radio') and the speaker's own invented names (people in the story, the product being sold). " +
-      `Return at most ${max}, in order of appearance. A brand's product (e.g. 'Toyota Camry') is a brand.`,
+      `Return at most ${max}, in order of appearance. A brand's product (e.g. 'Toyota Camry') is a brand; companies, apps and streaming services (Netflix, YouTube, Spotify) are brands.`,
     text,
     { check: (v) => v.references.find((r) => !text.includes(r.surface)) ? "every surface must be an exact substring of the text" : null },
   );
@@ -172,7 +195,9 @@ export function rewriteLLM(
       "For each reference, choose the candidate that best fits the sentence's meaning and joke, from the given list only. " +
       "Rewrite ONLY this sentence: keep its meaning, structure, tone and punchline, change as few words as possible, " +
       `and use each chosen name as written. Keep it between ${lo} and ${hi} characters. ` +
-      "If no candidate makes sense in the sentence (the line would stop making sense), set keepOriginal to true instead of forcing one.",
+      "A candidate of the same kind (another fast-food chain for a fast-food chain, another game show for a game show) is a good fit: use it. " +
+      "You may swap only some of the references; leave out picks for ones you keep. " +
+      "Set keepOriginal to true only if every candidate would make the sentence stop making literal sense.",
     `Audience: ${room}\n\nSentence: ${sentence}\n\n${body}`,
     { effort: "medium", check: (v) => validateRewrite(weak, v) },
   );
@@ -181,10 +206,12 @@ export function rewriteLLM(
 /** The LLM may only choose from Qloo's candidates, and must actually use the chosen name. */
 export function validateRewrite(weak: { referenceId: string; candidates: Candidate[] }[], v: z.infer<typeof RewriteSchema>): string | null {
   if (v.keepOriginal) return null;
-  for (const w of weak) {
-    const p = v.picks.find((x) => x.referenceId === w.referenceId);
-    const c = p && w.candidates.find((x) => x.entityId === p.entityId);
-    if (!c) return `pick one entityId from the list for referenceId ${w.referenceId}`;
+  if (!v.picks.length) return "pick at least one candidate, or set keepOriginal to true";
+  for (const p of v.picks) {
+    const w = weak.find((x) => x.referenceId === p.referenceId);
+    if (!w) return `unknown referenceId ${p.referenceId}`;
+    const c = w.candidates.find((x) => x.entityId === p.entityId);
+    if (!c) return `pick an entityId from the list for referenceId ${w.referenceId}`;
     if (!v.rewrittenSentence.toLowerCase().includes(c.name.toLowerCase())) return `the sentence must contain "${c.name}"`;
   }
   return null;
