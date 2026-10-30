@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { extractLLM, llmOnlyRewrite, rewriteLLM, type Candidate } from "./llm";
 import { createQloo, QlooBudgetError, QlooError, type Qloo } from "./qloo";
 import type { QlooEntity } from "./qloo-types";
@@ -294,4 +295,20 @@ function groupBy<T>(xs: T[], key: (x: T) => string): Map<string, T[]> {
   const m = new Map<string, T[]>();
   for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
   return m;
+}
+
+// ---------- API input and errors (shared by /api/run and /api/v1/rewrite) ----------
+
+export const RunInputSchema = z.object({
+  text: z.string().trim().min(10, "Paste at least a sentence.").max(2500, "Keep it under 2,500 characters."),
+  room: z.string().trim().min(2, "Describe the room.").max(200),
+  roomB: z.string().trim().min(2).max(200).optional(),
+  suggest: z.boolean().optional(),
+});
+
+/** A message that is safe and useful to show the user. */
+export function publicError(e: unknown): string {
+  if (e instanceof RoomError) return e.message;
+  if (e instanceof QlooError) return "Qloo didn't answer as expected. Please try again, or open an example.";
+  return "Something went wrong while reading the room. Please try again, or open an example.";
 }
