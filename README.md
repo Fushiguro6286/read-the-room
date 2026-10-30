@@ -73,6 +73,13 @@ curl -G "https://hackathon.api.qloo.com/v2/insights" \
 
 Responses are cached for 7 days by query string, and only calls that miss the cache count toward the budget.
 
+## Built for working writers
+
+- **Upload a recording:** drop in an audio or video clip of a set (up to 4 MB) and Gemini transcribes it into the text box.
+- **Tour presets:** paste a tour-dates or ticketing link, or the list of dates and venues, and each stop becomes a room (city plus an age range when the venue or ticket says so, e.g. 21+).
+- **Batch mode:** tune the same text for up to 5 rooms in one go, compare Room Scores and swaps in a table, open any room's full result, and download a CSV.
+- **Suggest new references:** for lines with no reference, the agent can add one, picked only from Qloo's audience snapshot for the room and off until you accept it (`"suggest": true` in the API).
+
 ## Who it's for
 
 - **Touring comedians:** retune the same set for each city.
@@ -117,6 +124,9 @@ npm run dev                  # http://localhost:3000
 - **Age buckets are approximate:** "45–60" maps to the Qloo buckets it overlaps (`45_to_54,55_and_older`).
 - **Places are scored but not swapped**, because swapping a city or landmark changes the meaning.
 - **Gemini free tier:** about 15 requests per minute, so live runs may slow down under load. Google may use free-tier prompts to improve its products, so don't paste confidential text.
+- **Uploads are capped at 4 MB** (Vercel's request limit), so long video sets need trimming or an audio-only export. Transcripts are cut at 2,500 characters.
+- **Batch runs count as live runs:** each room uses one of the 6 live runs per hour.
+- **Tour pages:** many ticketing sites block bots or render dates with JavaScript; pasting the list of dates works when the link doesn't.
 - **Demo data:** Qloo's terms don't allow storing its response data in a public repo, so precomputed demos live in Redis and in git-ignored `data/demos/` rather than in git.
 
 ## License

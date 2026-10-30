@@ -93,6 +93,37 @@ async function geminiJson(schema: z.ZodType, system: string, prompt: string, eff
   }
 }
 
+/** Transcribes an audio or video recording with Gemini (Claude has no audio input). */
+export async function transcribeMedia(data: Buffer, mimeType: string): Promise<string> {
+  if (!process.env.GEMINI_API_KEY) throw new Error("Transcription needs GEMINI_API_KEY.");
+  const kind = mimeType.startsWith("video/") ? "video" : "audio";
+  let lastErr = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await throttle();
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        model: attempt === 0 ? process.env.GEMINI_MODEL || FALLBACK_MODEL : FALLBACK_MODEL,
+        store: false,
+        system_instruction:
+          "Transcribe the spoken words of this performance or speech verbatim, as plain prose. " +
+          "Drop filler sounds (um, uh), laughter and applause, timestamps and speaker labels. Output only the transcript. If nobody speaks, output nothing.",
+        input: [
+          { type: "text", text: "Transcribe this recording." },
+          { type: kind, data: data.toString("base64"), mime_type: mimeType },
+        ],
+      }),
+      signal: AbortSignal.timeout(60_000),
+    }).catch((e: Error) => e);
+    if (res instanceof Error) lastErr = res.message;
+    else if (res.ok) return geminiText(await res.json()).trim();
+    else lastErr = `Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`;
+    await sleep(1500);
+  }
+  throw new Error(`Transcription failed: ${lastErr}`);
+}
+
 /**
  * Structured JSON call. Validates with zod (plus an optional semantic check) and
  * retries once with the error in the prompt.

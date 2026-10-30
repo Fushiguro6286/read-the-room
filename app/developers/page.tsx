@@ -43,6 +43,9 @@ export default function Developers() {
           <li>
             <code>room</code>: string, e.g. &quot;Atlanta, ages 45–60&quot; or &quot;fans of Taylor Swift&quot;
           </li>
+          <li>
+            <code>suggest</code>: optional boolean. When true, lines with no reference may get one, picked only from Qloo&apos;s audience snapshot (returned in <code>suggestions</code>, off until accepted)
+          </li>
         </ul>
         <pre className="mt-4 overflow-x-auto rounded-xl bg-stage-2 p-4 text-sm text-[#f3efe8]">{curl}</pre>
         <h3 className="mt-6 font-semibold">Response (abridged)</h3>

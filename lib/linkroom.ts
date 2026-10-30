@@ -96,3 +96,28 @@ export function proposeRoom(source: string) {
     source,
   );
 }
+
+export const TourSchema = z.object({
+  stops: z
+    .array(
+      z.object({
+        city: z.string().describe("City of this tour stop"),
+        venue: z.string().describe("Venue name, or empty if not listed"),
+        date: z.string().describe("Date as written, or empty if not listed"),
+        ageRange: z.string().describe('Likely audience age range as numbers, e.g. "25–34" or "21 and over"; empty if there is no basis or the show is all ages'),
+      }),
+    )
+    .describe("One entry per tour stop, in listed order"),
+});
+
+/** Turns a tour-dates page or pasted ticket/venue list into one room per stop. */
+export async function proposeTour(source: string) {
+  const r = await llmJson(
+    TourSchema,
+    "You read a tour schedule, ticketing page or list of venues and return each tour stop: city, venue, date, and a likely audience age range. " +
+      "Base the age range only on the text (venue type, ticket tiers, age limits like 21+, the act). Leave fields empty when there is no basis. Skip anything that isn't a show date.",
+    source,
+  );
+  return r.stops.filter((s) => s.city.trim()).slice(0, 10);
+}
+

@@ -3,9 +3,12 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { DEMOS } from "@/lib/demo-list";
 import type { RunResult, StepEvent } from "@/lib/types";
+import { streamRun } from "@/lib/run-client";
 import { AgentTimeline } from "./AgentTimeline";
+import { BatchPanel } from "./BatchPanel";
 import { EventLinkInput } from "./EventLinkInput";
 import { HowItWorks } from "./HowItWorks";
+import { RecordingUpload } from "./RecordingUpload";
 import { ResultView } from "./ResultView";
 import { TourMap } from "./TourMap";
 
@@ -63,6 +66,17 @@ export function App() {
     }
   }
 
+  function openResult(r: RunResult) {
+    setDemo(null);
+    setError("");
+    setRoom(r.room.label);
+    setResults({ a: r });
+    setSteps({ a: r.steps ?? [], b: [] });
+    setSplit(false);
+    setAskB(false);
+    scrollToResults();
+  }
+
   async function run(lane: Lane, roomOverride?: string) {
     const r = roomOverride ?? (lane === "a" ? room : roomB);
     setError("");
@@ -73,28 +87,11 @@ export function App() {
     else setSplit(true);
     scrollToResults();
     try {
-      const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, room: r, suggest }) });
-      if (!res.ok || !res.body) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || "The run failed. Try an example instead.");
-      }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop()!;
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const m = JSON.parse(line);
-          if (m.type === "step") setSteps((s) => ({ ...s, [lane]: [...s[lane], m] }));
-          else if (m.type === "result") setResults((x) => ({ ...x, [lane]: m.data }));
-          else if (m.type === "error") setError(m.message);
-        }
-      }
+      await streamRun({ text, room: r, suggest }, (m) => {
+        if (m.type === "step") setSteps((s) => ({ ...s, [lane]: [...s[lane], m] }));
+        else if (m.type === "result") setResults((x) => ({ ...x, [lane]: m.data }));
+        else if (m.type === "error") setError(m.message);
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -153,9 +150,12 @@ export function App() {
               }
             }}
           >
-            <label htmlFor="text" className="text-xs font-bold uppercase tracking-[0.2em] text-spot">
-              Or paste your own
-            </label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor="text" className="text-xs font-bold uppercase tracking-[0.2em] text-spot">
+                Or paste your own
+              </label>
+              <RecordingUpload onText={setText} disabled={!!running} />
+            </div>
             <textarea
               id="text"
               value={text}
@@ -192,6 +192,9 @@ export function App() {
             </label>
             <div>
               <EventLinkInput onUse={setRoom} />
+            </div>
+            <div>
+              <BatchPanel text={text} suggest={suggest} onOpen={openResult} />
             </div>
           </form>
         </div>
