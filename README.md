@@ -6,7 +6,7 @@
 
 **Live demo:** https://read-the-room-azure.vercel.app
 
-![Screenshot](docs/screenshot.png) <!-- TODO: add screenshot or GIF -->
+![The nephew bit, tuned for Atlanta 45–60 and Brooklyn 25–34](docs/screenshot.png)
 
 ## Judge in 60 seconds
 
