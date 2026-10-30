@@ -14,7 +14,8 @@
 2. Click the **stand-up** example ("The nephew bit"). It loads instantly from a precomputed run.
 3. Click a green **swapped** reference to see Qloo's numbers: affinity before and after, shared tags, and the candidates Qloo offered.
 4. Flip the tab from **Qloo-grounded** to **LLM only** to see what a plain LLM guesses without taste data.
-5. Click **Compare with another room** to see the same text tuned for two audiences side by side.
+5. Scroll to **Who it lands with** and click **See who it lands with**: a heatmap of the same references scored by Qloo for each age group and gender. The wedding toast written for Chicago 55+ lands best with 25–34s (95 vs 65).
+6. Click **Compare with another room** to see the same text tuned for two audiences side by side.
 
 ## What Qloo decides vs what the LLM writes
 
@@ -57,6 +58,7 @@ The loop runs for at most 3 rounds and within a budget of 20 Qloo calls per run,
 | Score references for the room | `GET /v2/insights` | `filter.type`, `filter.results.entities`, `signal.location.query`, `signal.demographics.age`, `signal.demographics.gender`, `signal.interests.entities` |
 | Find swap candidates | `GET /v2/insights` | `filter.type`, `filter.tags`, `operator.filter.tags` (intersection, then union), `filter.exclude.entities`, room signals, `take` |
 | Audience snapshot | `GET /v2/insights` | `filter.type` (TV, artist, movie, brand), room signals, `take=5` |
+| Who it lands with (heatmap) | `GET /v2/insights` | `filter.type`, `filter.results.entities`, `signal.demographics.age` or `signal.demographics.gender` (no location, so global names aren't filtered out) |
 
 Example: score two TV shows for Atlanta, ages 45–60.
 

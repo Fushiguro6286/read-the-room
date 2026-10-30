@@ -7,6 +7,7 @@ import { AgentTimeline } from "./AgentTimeline";
 import { EventLinkInput } from "./EventLinkInput";
 import { HowItWorks } from "./HowItWorks";
 import { ResultView } from "./ResultView";
+import { TourMap } from "./TourMap";
 
 type Lane = "a" | "b";
 const ROOM_EXAMPLES = ["Atlanta, ages 45–60", "Brooklyn, ages 25–34", "London, 25–34", "Fans of Taylor Swift and Peloton"];
@@ -268,6 +269,8 @@ export function App() {
             ) : (
               <ResultView result={a} onChange={(r) => setResults((x) => ({ ...x, a: r }))} />
             )}
+
+            {!split && <TourMap key={`${a.createdAt}|${a.room.label}`} result={a} />}
 
             {!split && <AgentTimeline steps={steps.a} budget={20} dark />}
           </div>
