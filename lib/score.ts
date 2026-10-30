@@ -84,3 +84,51 @@ export function splitSentences(text: string): { start: number; end: number; text
   }
   return out;
 }
+
+export interface Segment {
+  text: string;
+  ref?: ReferenceResult;
+  swapped?: boolean; // this piece is a Qloo-chosen replacement
+}
+
+/** Split the (final or original) text into plain pieces and reference pieces for highlighting. */
+export function segments(text: string, refs: ReferenceResult[], useSwaps: boolean): Segment[] {
+  type Span = { start: number; end: number; ref?: ReferenceResult; swapRefs?: ReferenceResult[]; rewritten?: string };
+  const swapped = new Map<number, Span>();
+  if (useSwaps)
+    for (const r of refs)
+      if (r.swap?.accepted) {
+        const s = swapped.get(r.swap.sentenceStart) ?? { start: r.swap.sentenceStart, end: r.swap.sentenceEnd, swapRefs: [], rewritten: r.swap.rewrittenSentence };
+        s.swapRefs!.push(r);
+        swapped.set(r.swap.sentenceStart, s);
+      }
+  const inSwapped = (pos: number) => [...swapped.values()].some((s) => pos >= s.start && pos < s.end);
+  const spans: Span[] = [...swapped.values(), ...refs.filter((r) => !inSwapped(r.start)).map((r) => ({ start: r.start, end: r.end, ref: r }))].sort((a, b) => a.start - b.start);
+
+  const out: Segment[] = [];
+  let pos = 0;
+  for (const s of spans) {
+    if (s.start < pos) continue;
+    if (s.start > pos) out.push({ text: text.slice(pos, s.start) });
+    if (s.ref) out.push({ text: text.slice(s.start, s.end), ref: s.ref });
+    else {
+      // Highlight each new name inside the rewritten sentence.
+      const sent = s.rewritten!;
+      const marks = s.swapRefs!
+        .map((r) => ({ r, i: sent.toLowerCase().indexOf(r.swap!.entityName.toLowerCase()), n: r.swap!.entityName.length }))
+        .filter((m) => m.i >= 0)
+        .sort((a, b) => a.i - b.i);
+      let p = 0;
+      for (const m of marks) {
+        if (m.i < p) continue;
+        if (m.i > p) out.push({ text: sent.slice(p, m.i) });
+        out.push({ text: sent.slice(m.i, m.i + m.n), ref: m.r, swapped: true });
+        p = m.i + m.n;
+      }
+      if (p < sent.length) out.push({ text: sent.slice(p) });
+    }
+    pos = s.end;
+  }
+  if (pos < text.length) out.push({ text: text.slice(pos) });
+  return out;
+}

@@ -90,3 +90,20 @@ describe("age buckets", () => {
     expect(ageBuckets(null, null)).toBeUndefined();
   });
 });
+
+describe("segments", () => {
+  it("highlights references, and the new name inside an accepted swap", async () => {
+    const { segments } = await import("@/lib/score");
+    const [s0, s1] = splitSentences(text);
+    const oprah: ReferenceResult = { id: "r1", surface: "Oprah", start: text.indexOf("Oprah"), end: text.indexOf("Oprah") + 5, sentenceIndex: 0, tags: [], affinity: 0.96, status: "strong" };
+    const beast: ReferenceResult = { id: "r2", surface: "MrBeast", start: text.indexOf("MrBeast"), end: text.indexOf("MrBeast") + 7, sentenceIndex: 1, tags: [], affinity: 0.05, status: "weak",
+      swap: { entityId: "e", entityName: "Steve Harvey", entityType: "person", affinity: 0.97, sharedTags: [], originalSentence: s1.text, rewrittenSentence: "He said no, more like Steve Harvey.", sentenceStart: s1.start, sentenceEnd: s1.end, lengthDelta: 0, accepted: true } };
+    const segs = segments(text, [oprah, beast], true);
+    expect(segs.map((s) => s.text).join("")).toBe(applySwaps(text, [oprah, beast]));
+    expect(segs.filter((s) => s.ref).map((s) => [s.text, !!s.swapped])).toEqual([["Oprah", false], ["Steve Harvey", true]]);
+    const orig = segments(text, [oprah, beast], false);
+    expect(orig.map((s) => s.text).join("")).toBe(text);
+    expect(orig.filter((s) => s.ref).map((s) => s.text)).toEqual(["Oprah", "MrBeast"]);
+    void s0;
+  });
+});
