@@ -10,11 +10,10 @@ async function main() {
   const only = process.argv[2];
   for (const d of DEMOS.filter((x) => !only || x.slug === only)) {
     console.log(`\n== ${d.slug}`);
-    const [a, b] = await Promise.all(
-      [d.roomA, d.roomB].map((room) =>
-        runAgent({ text: d.text, room }, { onStep: (e) => console.log(`  [${room}] ${e.key} ${e.status}: ${e.detail.slice(0, 140)}`) }),
-      ),
-    );
+    // Sequential: the free LLM tier has a per-minute request cap.
+    const run = (room: string) => runAgent({ text: d.text, room }, { onStep: (e) => console.log(`  [${room}] ${e.key} ${e.status}: ${e.detail.slice(0, 140)}`) });
+    const a = await run(d.roomA);
+    const b = await run(d.roomB);
     await saveDemo(d.slug, { a, b });
     console.log(`  saved: A ${a.roomScoreBefore}→${a.roomScoreAfter} (${a.qlooCalls} calls) | B ${b.roomScoreBefore}→${b.roomScoreAfter} (${b.qlooCalls} calls)`);
   }

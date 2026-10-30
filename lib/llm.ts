@@ -2,12 +2,62 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
-// The only file that talks to the LLM provider; swap the provider here.
+// The only file that talks to the LLM provider. Gemini (free tier) when GEMINI_API_KEY is set, otherwise Claude.
 let client: Anthropic | undefined;
-const llm = () => (client ??= new Anthropic());
-const model = () => process.env.LLM_MODEL || "claude-sonnet-5-5";
+const claude = () => (client ??= new Anthropic());
 
 type Effort = "low" | "medium" | "high";
+
+async function claudeJson(schema: z.ZodType, system: string, prompt: string, effort: Effort): Promise<unknown> {
+  const res = await claude().messages.parse({
+    model: process.env.LLM_MODEL || "claude-sonnet-5-5",
+    max_tokens: 4000,
+    system,
+    messages: [{ role: "user", content: prompt }],
+    output_config: { format: zodOutputFormat(schema), effort },
+  });
+  if (res.stop_reason === "refusal") throw new Error("The model declined this text.");
+  return res.parsed_output;
+}
+
+/** Text of the final model output. The SDKs call it output_text; raw responses carry it in steps[].content[]. */
+export function geminiText(j: { output_text?: string; steps?: { type?: string; content?: { text?: string }[] }[] }): string {
+  if (typeof j.output_text === "string") return j.output_text;
+  const out = (j.steps ?? []).filter((s) => s.type === "model_output").at(-1);
+  return (out?.content ?? []).map((c) => c.text ?? "").join("");
+}
+
+async function geminiJson(schema: z.ZodType, system: string, prompt: string, effort: Effort): Promise<unknown> {
+  const { $schema, ...jsonSchema } = z.toJSONSchema(schema) as Record<string, unknown>;
+  void $schema;
+  const body = JSON.stringify({
+    model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+    system_instruction: system,
+    input: prompt,
+    store: false,
+    response_format: { type: "text", mime_type: "application/json", schema: jsonSchema },
+    generation_config: { thinking_level: effort === "high" ? "high" : effort },
+  });
+  let res: Response | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
+      body,
+      signal: AbortSignal.timeout(60_000),
+    });
+    // Free tier has a per-minute cap: back off and retry on 429/5xx.
+    if (res.status !== 429 && res.status < 500) break;
+    await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+  }
+  const j = await res!.json().catch(() => ({}));
+  if (!res!.ok) throw new Error(`Gemini ${res!.status}: ${j?.error?.code ?? ""} ${j?.error?.message ?? ""}`.trim());
+  try {
+    return JSON.parse(geminiText(j));
+  } catch {
+    return null; // fails zod validation below, which retries with feedback
+  }
+}
 
 /**
  * Structured JSON call. Validates with zod (plus an optional semantic check) and
@@ -19,18 +69,12 @@ export async function llmJson<S extends z.ZodType>(
   user: string,
   opts: { effort?: Effort; check?: (v: z.infer<S>) => string | null } = {},
 ): Promise<z.infer<S>> {
+  const call = process.env.GEMINI_API_KEY ? geminiJson : claudeJson;
   let prompt = user;
   let lastErr = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm().messages.parse({
-      model: model(),
-      max_tokens: 4000,
-      system,
-      messages: [{ role: "user", content: prompt }],
-      output_config: { format: zodOutputFormat(schema), effort: opts.effort ?? "low" },
-    });
-    if (res.stop_reason === "refusal") throw new Error("The model declined this text.");
-    const parsed = schema.safeParse(res.parsed_output);
+    const raw = await call(schema, system, prompt, opts.effort ?? "low");
+    const parsed = schema.safeParse(raw);
     lastErr = parsed.success ? (opts.check?.(parsed.data) ?? "") : parsed.error.message;
     if (!lastErr) return parsed.data as z.infer<S>;
     prompt = `${user}\n\nYour previous answer was invalid: ${lastErr}\nFix it and answer again.`;

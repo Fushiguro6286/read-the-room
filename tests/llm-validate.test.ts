@@ -15,3 +15,12 @@ describe("swap validation", () => {
     expect(validateRewrite(weak, { picks: [{ referenceId: "r1", entityId: "A" }], rewrittenSentence: "More like Oprah." })).toMatch(/must contain/);
   });
 });
+
+describe("gemini response reading", () => {
+  it("reads output_text, or the last model_output step", async () => {
+    const { geminiText } = await import("@/lib/llm");
+    expect(geminiText({ output_text: '{"a":1}' })).toBe('{"a":1}');
+    expect(geminiText({ steps: [{ type: "thought", content: [{ text: "x" }] }, { type: "model_output", content: [{ text: '{"a":' }, { text: "1}" }] }] })).toBe('{"a":1}');
+    expect(geminiText({})).toBe("");
+  });
+});
