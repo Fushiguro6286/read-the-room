@@ -142,6 +142,7 @@ export const ExtractSchema = z.object({
     z.object({
       surface: z.string().describe("Exact substring copied from the text"),
       guessedType: z.enum(TYPE_NAMES),
+      lookupName: z.string().describe("Official full name to look up, e.g. 'Gary Vee' -> 'Gary Vaynerchuk', 'Big Mac' -> 'McDonald's'; same as surface if already official"),
     }),
   ),
 });

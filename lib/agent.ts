@@ -41,7 +41,7 @@ export interface RunOptions {
 /** Find each surface in the text; first non-overlapping occurrence, duplicates dropped. */
 export function locateReferences(
   text: string,
-  surfaces: { surface: string; guessedType: string }[],
+  surfaces: { surface: string; guessedType: string; lookupName?: string }[],
   max: number,
 ) {
   const sentences = splitSentences(text);
@@ -50,6 +50,7 @@ export function locateReferences(
   const out: {
     surface: string;
     guessedType: string;
+    lookupName?: string;
     start: number;
     end: number;
     sentenceIndex: number;
@@ -186,18 +187,15 @@ export async function runAgent(
     await Promise.all(
       refs.map(async (r, i) => {
         const guessed = `urn:entity:${located[i].guessedType}`;
+        // Search by the official name ("Gary Vaynerchuk"), accept a match on either name.
+        const name = located[i].lookupName?.trim() || r.surface;
+        const match = (xs: QlooEntity[]) => pickMatch(name, xs) ?? pickMatch(r.surface, xs);
         try {
-          let hit = pickMatch(
-            r.surface,
-            await qloo.search(r.surface, guessed, 5),
-          );
+          let hit = match(await qloo.search(name, guessed, 5));
           if (!hit) {
             // Untyped fallback for near-miss type guesses (e.g. a person guessed as an artist).
-            const any = await qloo.search(r.surface, undefined, 5);
-            hit = pickMatch(
-              r.surface,
-              any.filter((e) => sameFamily(guessed, e.type)),
-            );
+            const any = await qloo.search(name, undefined, 5);
+            hit = match(any.filter((e) => sameFamily(guessed, e.type)));
           }
           if (hit)
             Object.assign(r, {
