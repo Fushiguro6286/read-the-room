@@ -4,7 +4,7 @@
 
 **Read the Room** is an agent that rewrites a speech, comedy set, sales pitch or ad so its cultural references land with the audience who will hear it. **Qloo's taste graph decides what lands. The LLM only finds references and writes sentences.**
 
-**Live demo:** _TODO: Vercel URL_
+**Live demo:** https://read-the-room-azure.vercel.app
 
 ![Screenshot](docs/screenshot.png) <!-- TODO: add screenshot or GIF -->
 
