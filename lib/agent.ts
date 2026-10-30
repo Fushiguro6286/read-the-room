@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { extractLLM, llmOnlyRewrite, rewriteLLM, type Candidate } from "./llm";
+import { extractLLM, llmOnlyRewrite, rewriteLLM, suggestLLM, type Candidate } from "./llm";
 import { createQloo, QlooBudgetError, QlooError, type Qloo } from "./qloo";
 import type { QlooEntity } from "./qloo-types";
 import { parseRoom, roomParams, RoomError } from "./room";
@@ -12,14 +12,7 @@ import {
   splitSentences,
   THRESHOLDS,
 } from "./score";
-import type {
-  ReferenceResult,
-  RoomSignals,
-  RunResult,
-  SnapshotEntry,
-  StepEvent,
-  StepKey,
-} from "./types";
+import type { ReferenceResult, RoomSignals, RunResult, SnapshotEntry, StepEvent, StepKey, Suggestion } from "./types";
 
 export { RoomError };
 
@@ -119,7 +112,7 @@ export function topTags<T extends { id: string; type?: string }>(
 }
 
 export async function runAgent(
-  input: { text: string; room: string },
+  input: { text: string; room: string; suggest?: boolean },
   opts: RunOptions = {},
 ): Promise<RunResult> {
   const qloo = opts.qloo ?? createQloo();
@@ -503,6 +496,16 @@ export async function runAgent(
 
   const [snap, llmOnlyText] = await Promise.all([snapshotP, llmOnlyP]);
   if (!llmOnlyText) notes.push("LLM-only baseline unavailable");
+  let suggestions: Suggestion[] | undefined;
+  if (input.suggest) {
+    step("rewrite", "running", "Suggesting references for lines that have none (from the audience snapshot)");
+    suggestions = await suggestReferences(text, refs, snap, room.label).catch((e) => {
+      console.error("suggestions failed:", e);
+      notes.push("Suggestions unavailable for this run");
+      return [];
+    });
+    step("rewrite", "done", suggestions.length ? `Suggested: ${suggestions.map((s) => s.name).join(", ")}` : "No natural place to add a reference");
+  }
   const result: RunResult = {
     text,
     room,
@@ -512,6 +515,7 @@ export async function runAgent(
     roomScoreBefore: roomScore(refs, false),
     roomScoreAfter: roomScore(refs, true),
     snapshot: snap,
+    suggestions,
     qlooCalls: qloo.calls,
     rounds,
     createdAt: new Date().toISOString(),
@@ -525,6 +529,28 @@ export async function runAgent(
   );
   result.steps = steps;
   return result;
+}
+
+const SNAP_CATEGORY: Record<string, string> = { tv_show: "TV show", artist: "music artist", movie: "movie", brand: "brand" };
+
+/** Up to 2 sentences without references get one suggested addition, chosen only from the snapshot. */
+async function suggestReferences(text: string, refs: ReferenceResult[], snap: Record<string, SnapshotEntry[]>, room: string): Promise<Suggestion[]> {
+  const used = new Set(refs.map((r) => r.sentenceIndex));
+  const sentences = splitSentences(text)
+    .map((s, index) => ({ ...s, index }))
+    .filter((s) => !used.has(s.index) && s.text.length >= 25)
+    .slice(0, 2);
+  const candidates = Object.entries(snap).flatMap(([k, list]) => list.map((e) => ({ ...e, category: SNAP_CATEGORY[k] ?? k })));
+  if (!sentences.length || !candidates.length) return [];
+  const out = await suggestLLM(sentences, candidates, room);
+  const seen = new Set<number>();
+  return out.suggestions.flatMap((s) => {
+    const sent = sentences.find((x) => x.index === s.sentenceIndex)!;
+    const c = candidates.find((x) => x.entityId === s.entityId)!;
+    if (seen.has(sent.index)) return [];
+    seen.add(sent.index);
+    return [{ sentenceIndex: sent.index, sentenceStart: sent.start, sentenceEnd: sent.end, originalSentence: sent.text, entityId: c.entityId, name: c.name, category: c.category, affinity: c.affinity, suggestedSentence: s.suggestedSentence, accepted: false }];
+  });
 }
 
 /** Length guard (±10%): retry once, then keep the closer attempt. */

@@ -1,5 +1,5 @@
 // Pure helpers shared by the server and the browser (no server imports here).
-import type { ReferenceResult, Status } from "./types";
+import type { ReferenceResult, Status, Suggestion } from "./types";
 
 /** Calibrated from live Qloo data in M0 (see docs/qloo-notes.md). */
 export const THRESHOLDS = {
@@ -27,9 +27,10 @@ export function roomScore(refs: ReferenceResult[], after: boolean): number {
 }
 
 /** Rebuild the text from the original plus accepted swaps (sentence-level, so no API call is needed). */
-export function applySwaps(text: string, refs: ReferenceResult[]): string {
-  const bySentence = new Map<number, NonNullable<ReferenceResult["swap"]>>();
+export function applySwaps(text: string, refs: ReferenceResult[], suggestions: Suggestion[] = []): string {
+  const bySentence = new Map<number, { sentenceStart: number; sentenceEnd: number; rewrittenSentence: string }>();
   for (const r of refs) if (r.swap?.accepted) bySentence.set(r.swap.sentenceStart, r.swap);
+  for (const s of suggestions) if (s.accepted) bySentence.set(s.sentenceStart, { ...s, rewrittenSentence: s.suggestedSentence });
   let out = text;
   for (const s of [...bySentence.values()].sort((a, b) => b.sentenceStart - a.sentenceStart))
     out = out.slice(0, s.sentenceStart) + s.rewrittenSentence + out.slice(s.sentenceEnd);
@@ -96,11 +97,12 @@ export interface Segment {
   text: string;
   ref?: ReferenceResult;
   swapped?: boolean; // this piece is a Qloo-chosen replacement
+  suggested?: Suggestion; // this piece is an added reference from the audience snapshot
 }
 
 /** Split the (final or original) text into plain pieces and reference pieces for highlighting. */
-export function segments(text: string, refs: ReferenceResult[], useSwaps: boolean): Segment[] {
-  type Span = { start: number; end: number; ref?: ReferenceResult; swapRefs?: ReferenceResult[]; rewritten?: string };
+export function segments(text: string, refs: ReferenceResult[], useSwaps: boolean, suggestions: Suggestion[] = []): Segment[] {
+  type Span = { start: number; end: number; ref?: ReferenceResult; swapRefs?: ReferenceResult[]; rewritten?: string; suggestion?: Suggestion };
   const swapped = new Map<number, Span>();
   if (useSwaps)
     for (const r of refs)
@@ -109,6 +111,10 @@ export function segments(text: string, refs: ReferenceResult[], useSwaps: boolea
         s.swapRefs!.push(r);
         swapped.set(r.swap.sentenceStart, s);
       }
+  if (useSwaps)
+    for (const sg of suggestions)
+      if (sg.accepted && !swapped.has(sg.sentenceStart))
+        swapped.set(sg.sentenceStart, { start: sg.sentenceStart, end: sg.sentenceEnd, swapRefs: [], rewritten: sg.suggestedSentence, suggestion: sg });
   const inSwapped = (pos: number) => [...swapped.values()].some((s) => pos >= s.start && pos < s.end);
   const spans: Span[] = [...swapped.values(), ...refs.filter((r) => !inSwapped(r.start)).map((r) => ({ start: r.start, end: r.end, ref: r }))].sort((a, b) => a.start - b.start);
 
@@ -121,15 +127,14 @@ export function segments(text: string, refs: ReferenceResult[], useSwaps: boolea
     else {
       // Highlight each new name inside the rewritten sentence.
       const sent = s.rewritten!;
-      const marks = s.swapRefs!
-        .map((r) => ({ r, i: sent.toLowerCase().indexOf(r.swap!.entityName.toLowerCase()), n: r.swap!.entityName.length }))
-        .filter((m) => m.i >= 0)
-        .sort((a, b) => a.i - b.i);
+      const marks: { r?: ReferenceResult; i: number; n: number }[] = s.swapRefs!.map((r) => ({ r, i: sent.toLowerCase().indexOf(r.swap!.entityName.toLowerCase()), n: r.swap!.entityName.length }));
+      if (s.suggestion) marks.push({ i: sent.toLowerCase().indexOf(s.suggestion.name.toLowerCase()), n: s.suggestion.name.length });
+      marks.sort((a, b) => a.i - b.i);
       let p = 0;
       for (const m of marks) {
-        if (m.i < p) continue;
+        if (m.i < 0 || m.i < p) continue;
         if (m.i > p) out.push({ text: sent.slice(p, m.i) });
-        out.push({ text: sent.slice(m.i, m.i + m.n), ref: m.r, swapped: true });
+        out.push(m.r ? { text: sent.slice(m.i, m.i + m.n), ref: m.r, swapped: true } : { text: sent.slice(m.i, m.i + m.n), suggested: s.suggestion });
         p = m.i + m.n;
       }
       if (p < sent.length) out.push({ text: sent.slice(p) });

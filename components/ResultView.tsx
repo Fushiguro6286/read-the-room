@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { applySwaps, roomScore, toggleSwap } from "@/lib/score";
-import type { ReferenceResult, RunResult } from "@/lib/types";
+import type { ReferenceResult, RunResult, Suggestion } from "@/lib/types";
 import { HighlightedText } from "./HighlightedText";
 import { RoomScore } from "./RoomScore";
 import { SwapPopover } from "./SwapPopover";
@@ -37,10 +37,15 @@ export function ResultView({ result, onChange, compact, readOnly }: { result: Ru
 
   const setAccepted = (sentenceStart: number, accepted: boolean) => {
     const next = toggleSwap(refs, sentenceStart, accepted);
-    onChange?.({ ...result, references: next, finalText: applySwaps(result.text, next), roomScoreAfter: roomScore(next, true) });
+    onChange?.({ ...result, references: next, finalText: applySwaps(result.text, next, result.suggestions), roomScoreAfter: roomScore(next, true) });
   };
 
-  const finalText = applySwaps(result.text, refs);
+  const setSuggestion = (sentenceStart: number, accepted: boolean) => {
+    const suggestions = result.suggestions?.map((s) => (s.sentenceStart === sentenceStart ? { ...s, accepted } : s));
+    onChange?.({ ...result, suggestions, finalText: applySwaps(result.text, refs, suggestions) });
+  };
+
+  const finalText = applySwaps(result.text, refs, result.suggestions);
 
   return (
     <div className={compact ? "space-y-4" : "grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]"}>
@@ -68,8 +73,16 @@ export function ResultView({ result, onChange, compact, readOnly }: { result: Ru
                     <span aria-hidden>↓</span> Click &ldquo;{firstSwap.swap!.entityName}&rdquo; to see why Qloo picked it
                   </div>
                 )}
-                <HighlightedText text={result.text} refs={refs} useSwaps onSelect={select} hintRefId={hint ? firstSwap?.id : undefined} />
+                <HighlightedText text={result.text} refs={refs} useSwaps onSelect={select} hintRefId={hint ? firstSwap?.id : undefined} suggestions={result.suggestions} />
               </div>
+              {!!result.suggestions?.length && (
+                <div className="mt-4 space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-ink-soft">Suggested additions (from what this room loves)</h3>
+                  {result.suggestions.map((s) => (
+                    <SuggestionChip key={s.sentenceStart} s={s} onToggle={readOnly ? undefined : (on) => setSuggestion(s.sentenceStart, on)} />
+                  ))}
+                </div>
+              )}
               <Legend />
             </>
           ) : (
@@ -101,6 +114,24 @@ export function ResultView({ result, onChange, compact, readOnly }: { result: Ru
         <AudienceSnapshot snapshot={result.snapshot} />
       </div>
       {selected && <SwapPopover r={refs.find((r) => r.id === selected.id) ?? selected} onClose={() => setSelected(null)} />}
+    </div>
+  );
+}
+
+function SuggestionChip({ s, onToggle }: { s: Suggestion; onToggle?: (on: boolean) => void }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-dashed border-strong/60 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="font-semibold">
+          + {s.name} <span className="font-normal text-ink-soft">({s.category}, Qloo affinity {s.affinity.toFixed(2)})</span>
+        </div>
+        <div className="text-ink-soft">{s.suggestedSentence}</div>
+      </div>
+      {onToggle && (
+        <button type="button" aria-pressed={s.accepted} onClick={() => onToggle(!s.accepted)} className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${s.accepted ? "bg-ink text-paper" : "bg-strong text-white"}`}>
+          {s.accepted ? "Remove" : "Add"}
+        </button>
+      )}
     </div>
   );
 }

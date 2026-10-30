@@ -4,11 +4,24 @@ import { useRef, useState } from "react";
 import { DEMOS } from "@/lib/demo-list";
 import type { RunResult, StepEvent } from "@/lib/types";
 import { AgentTimeline } from "./AgentTimeline";
+import { EventLinkInput } from "./EventLinkInput";
 import { HowItWorks } from "./HowItWorks";
 import { ResultView } from "./ResultView";
 
 type Lane = "a" | "b";
 const ROOM_EXAMPLES = ["Atlanta, ages 45–60", "Brooklyn, ages 25–34", "London, 25–34", "Fans of Taylor Swift and Peloton"];
+const RANDOM_ROOMS = [
+  "Nashville, ages 25–34",
+  "Chicago, ages 55 and over",
+  "Los Angeles, ages 18–24",
+  "Miami, ages 35–44",
+  "Seattle, ages 25–34",
+  "Dallas, ages 45–54",
+  "Toronto, ages 25–34",
+  "London, ages 35–44",
+  "New Orleans, ages 30–45",
+  "Denver, ages 25–34",
+];
 
 export function App() {
   const [text, setText] = useState("");
@@ -21,6 +34,7 @@ export function App() {
   const [split, setSplit] = useState(false);
   const [askB, setAskB] = useState(false);
   const [demo, setDemo] = useState<string | null>(null);
+  const [suggest, setSuggest] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const scrollToResults = () => setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -48,8 +62,8 @@ export function App() {
     }
   }
 
-  async function run(lane: Lane) {
-    const r = lane === "a" ? room : roomB;
+  async function run(lane: Lane, roomOverride?: string) {
+    const r = roomOverride ?? (lane === "a" ? room : roomB);
     setError("");
     setRunning(lane);
     setSteps((s) => ({ ...s, [lane]: [] }));
@@ -58,7 +72,7 @@ export function App() {
     else setSplit(true);
     scrollToResults();
     try {
-      const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, room: r }) });
+      const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, room: r, suggest }) });
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || "The run failed. Try an example instead.");
@@ -171,6 +185,13 @@ export function App() {
                 {running ? "Reading…" : "Read the room"}
               </button>
             </div>
+            <label className="mt-3 inline-flex items-center gap-2 text-sm text-[#d8d1c5]">
+              <input type="checkbox" checked={suggest} onChange={(e) => setSuggest(e.target.checked)} className="h-4 w-4 accent-[#f5b335]" />
+              Suggest new references for lines that have none (picked only from Qloo&apos;s audience snapshot)
+            </label>
+            <div>
+              <EventLinkInput onUse={setRoom} />
+            </div>
           </form>
         </div>
       </header>
@@ -202,6 +223,19 @@ export function App() {
                   className="rounded-full border border-spot px-4 py-2 text-sm font-semibold text-spot hover:bg-spot hover:text-stage"
                 >
                   {split ? "Single room" : "Compare with another room"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!!running}
+                  onClick={() => {
+                    const pick = RANDOM_ROOMS.filter((x) => x !== room)[Math.floor(Math.random() * (RANDOM_ROOMS.length - 1))];
+                    setRoom(pick);
+                    setDemo(null);
+                    run("a", pick);
+                  }}
+                  className="rounded-full border border-stage-line px-4 py-2 text-sm font-semibold text-[#d8d1c5] hover:border-spot hover:text-spot disabled:opacity-40"
+                >
+                  Try a random room
                 </button>
                 <ShareButton a={a} b={split ? b : undefined} />
               </div>

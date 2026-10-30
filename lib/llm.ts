@@ -229,3 +229,35 @@ export async function llmOnlyRewrite(text: string, room: string): Promise<string
   );
   return r.text;
 }
+
+export const SuggestSchema = z.object({
+  suggestions: z.array(z.object({ sentenceIndex: z.number().int(), entityId: z.string(), suggestedSentence: z.string() })),
+});
+
+export interface SnapshotCandidate {
+  entityId: string;
+  name: string;
+  category: string;
+}
+
+/** Feature 16: add one reference to a sentence that has none, chosen ONLY from the room's snapshot. */
+export function suggestLLM(sentences: { index: number; text: string }[], candidates: SnapshotCandidate[], room: string) {
+  return llmJson(
+    SuggestSchema,
+    "You add one cultural reference to a sentence so it lands with an audience. Choose ONLY from the given list. " +
+      "Keep the sentence's meaning and tone and add as few words as possible. Use the chosen name exactly as written. " +
+      "Return at most one suggestion per sentence, and skip a sentence if nothing fits naturally.",
+    `Audience: ${room}\n\nSentences:\n${sentences.map((s) => `[${s.index}] ${s.text}`).join("\n")}\n\nCandidates (entityId: name, category):\n${candidates.map((c) => `- ${c.entityId}: ${c.name} (${c.category})`).join("\n")}`,
+    { check: (v) => validateSuggestions(sentences, candidates, v) },
+  );
+}
+
+export function validateSuggestions(sentences: { index: number }[], candidates: SnapshotCandidate[], v: z.infer<typeof SuggestSchema>): string | null {
+  for (const s of v.suggestions) {
+    if (!sentences.some((x) => x.index === s.sentenceIndex)) return `sentenceIndex ${s.sentenceIndex} is not in the list`;
+    const c = candidates.find((x) => x.entityId === s.entityId);
+    if (!c) return `entityId ${s.entityId} is not in the candidate list`;
+    if (!s.suggestedSentence.toLowerCase().includes(c.name.toLowerCase())) return `the sentence must contain "${c.name}"`;
+  }
+  return null;
+}

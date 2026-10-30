@@ -39,6 +39,20 @@ export interface ReferenceResult {
   swap?: Swap;
 }
 
+/** Feature 16: a reference added to a sentence that had none, chosen only from the audience snapshot. */
+export interface Suggestion {
+  sentenceIndex: number;
+  sentenceStart: number;
+  sentenceEnd: number;
+  originalSentence: string;
+  entityId: string;
+  name: string;
+  category: string;
+  affinity: number;
+  suggestedSentence: string;
+  accepted: boolean; // off until the user adds it
+}
+
 export interface SnapshotEntry {
   entityId: string;
   name: string;
@@ -55,7 +69,7 @@ export interface RunResult {
   roomScoreBefore: number;
   roomScoreAfter: number;
   snapshot: Record<string, SnapshotEntry[]>;
-  suggestions?: { sentenceIndex: number; entityId: string; name: string; suggestedSentence: string }[];
+  suggestions?: Suggestion[];
   qlooCalls: number;
   rounds: number;
   createdAt: string;

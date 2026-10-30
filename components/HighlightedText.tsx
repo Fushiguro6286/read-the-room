@@ -1,6 +1,6 @@
 "use client";
 import { segments } from "@/lib/score";
-import type { ReferenceResult } from "@/lib/types";
+import type { ReferenceResult, Suggestion } from "@/lib/types";
 import { affinityText, STATUS } from "./ui";
 
 /** Text with each reference underlined by status; Qloo swaps shown in green with a "swapped" marker. */
@@ -10,16 +10,27 @@ export function HighlightedText({
   useSwaps,
   onSelect,
   hintRefId,
+  suggestions,
 }: {
   text: string;
   refs: ReferenceResult[];
   useSwaps: boolean;
   onSelect?: (r: ReferenceResult) => void;
   hintRefId?: string;
+  suggestions?: Suggestion[];
 }) {
   return (
     <p className="whitespace-pre-wrap text-[17px] leading-[1.9] sm:text-lg">
-      {segments(text, refs, useSwaps).map((s, i) => {
+      {segments(text, refs, useSwaps, suggestions).map((s, i) => {
+        if (s.suggested)
+          return (
+            <span key={i} title={`Added from Qloo's audience snapshot: ${s.suggested.category}, affinity ${s.suggested.affinity.toFixed(2)}`} className="rounded-sm border border-dashed border-strong px-0.5 font-semibold text-strong">
+              {s.text}
+              <sup className="ml-0.5 text-[10px] font-bold" aria-hidden>
+                added
+              </sup>
+            </span>
+          );
         if (!s.ref) return <span key={i}>{s.text}</span>;
         const status = s.swapped ? "strong" : s.ref.status;
         const st = STATUS[status];
